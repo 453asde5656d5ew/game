@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>木こりアクション 試作版</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #1f2937;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  #wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 10px;
+  }
+  canvas {
+    background: #9ed7ff;
+    border: 4px solid #222;
+    max-width: 96vw;
+    max-height: 78vh;
+    image-rendering: pixelated;
+  }
+  .help {
+    color: white;
+    font-size: 14px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="960" height="540"></canvas>
+  <div class="help">
+    ← → 移動　↑ / W ジャンプ　↓ / S しゃがむ　Space オノ攻撃　R リスタート
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const W = canvas.width;
+const H = canvas.height;
+const groundY = 460;
+
+const keys = {};
+let score = 0;
+let gameOver = false;
+let spawnTimer = 0;
+let worldOffset = 0;
+
+document.addEventListener("keydown", e => {
+  keys[e.code] = true;
+  if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code)) {
+    e.preventDefault();
+  }
+  if (e.code === "KeyR" && gameOver) resetGame();
+});
+document.addEventListener("keyup", e => keys[e.code] = false);
+
+const player = {
+  x: 170,
+  y: groundY - 90,
+  w: 48,
+  h: 90,
+  standH: 90,
+  crouchH: 55,
+  vx: 0,
+  vy: 0,
+  speed: 4.2,
+  jumpPower: 14,
+  onGround: true,
+  facing: 1,
+  crouching: false,
+  attacking: false,
+  attackTimer: 0,
+  hp: 3,
+  invuln: 0
+};
+
+let crows = [];
+
+function resetGame() {
+  score = 0;
+  gameOver = false;
+  spawnTimer = 0;
+  worldOffset = 0;
+  crows = [];
+  Object.assign(player, {
+    x:170, y:groundY-90, w:48, h:90,
+    vx:0, vy:0, onGround:true, facing:1,
+    crouching:false, attacking:false, attackTimer:0,
+    hp:3, invuln:0
+  });
+}
+
+function rectsOverlap(a,b) {
+  return a.x < b.x+b.w &&
+         a.x+a.w > b.x &&
+         a.y < b.y+b.h &&
+         a.y+a.h > b.y;
+}
+
+function spawnCrow() {
+  const low = Math.random() < 0.45;
+  crows.push({
+    x: W + 40,
+    y: low ? groundY - 85 : groundY - 155 - Math.random()*35,
+    w: 54,
+    h: 34,
+    speed: 3.3 + Math.random()*1.6,
+    flap: Math.random()*10,
+    alive: true
+  });
+}
+
+function update() {
+  if (gameOver) return;
+
+  const left = keys["ArrowLeft"] || keys["KeyA"];
+  const right = keys["ArrowRight"] || keys["KeyD"];
+  const jump = keys["ArrowUp"] || keys["KeyW"];
+  const crouch = keys["ArrowDown"] || keys["KeyS"];
+  const attack = keys["Space"];
+
+  player.vx = 0;
+  if (left) { player.vx = -player.speed; player.facing = -1; }
+  if (right) { player.vx = player.speed; player.facing = 1; }
+
+  player.crouching = crouch && player.onGround;
+  const targetH = player.crouching ? player.crouchH : player.standH;
+  if (player.h !== targetH) {
+    const bottom = player.y + player.h;
+    player.h = targetH;
+    player.y = bottom - player.h;
+  }
+
+  if (jump && player.onGround && !player.crouching) {
+    player.vy = -player.jumpPower;
+    player.onGround = false;
+  }
+
+  if (attack && !player.attacking) {
+    player.attacking = true;
+    player.attackTimer = 12;
+  }
+
+  if (player.attacking) {
+    player.attackTimer--;
+    if (player.attackTimer <= 0) player.attacking = false;
+  }
+
+  player.vy += 0.75;
+  player.x += player.vx;
+  player.y += player.vy;
+
+  if (player.x < 20) player.x = 20;
+  if (player.x > W - player.w - 20) player.x = W - player.w - 20;
+
+  const floorY = groundY - player.h;
+  if (player.y >= floorY) {
+    player.y = floorY;
+    player.vy = 0;
+    player.onGround = true;
+  }
+
+  if (right) worldOffset += 2.2;
+
+  if (player.invuln > 0) player.invuln--;
+
+  spawnTimer--;
+  if (spawnTimer <= 0) {
+    spawnCrow();
+    spawnTimer = 75 + Math.random()*80;
+  }
+
+  let attackBox = null;
+  if (player.attacking) {
+    attackBox = {
+      x: player.facing === 1 ? player.x + player.w : player.x - 58,
+      y: player.y + 15,
+      w: 58,
+      h: 55
+    };
+  }
+
+  for (const crow of crows) {
+    crow.x -= crow.speed;
+    crow.flap += 0.2;
+
+    if (attackBox && rectsOverlap(attackBox, crow)) {
+      crow.alive = false;
+      score += 100;
+      continue;
+    }
+
+    if (player.invuln <= 0 && rectsOverlap(player, crow)) {
+      crow.alive = false;
+      player.hp--;
+      player.invuln = 60;
+      if (player.hp <= 0) gameOver = true;
+    }
+  }
+
+  crows = crows.filter(c => c.alive && c.x > -100);
+}
+
+function drawBackground() {
+  ctx.fillStyle = "#9ed7ff";
+  ctx.fillRect(0,0,W,H);
+
+  // distant hills
+  ctx.fillStyle = "#77b76b";
+  for (let i=-1;i<7;i++) {
+    const x = i*190 - (worldOffset*0.25)%190;
+    ctx.beginPath();
+    ctx.arc(x, 400, 150, Math.PI, 0);
+    ctx.fill();
+  }
+
+  // trees
+  for (let i=-1;i<9;i++) {
+    const x = i*130 - (worldOffset*0.6)%130;
+    ctx.fillStyle = "#6b4423";
+    ctx.fillRect(x+60, 295, 22, 165);
+    ctx.fillStyle = "#2f7d32";
+    ctx.beginPath();
+    ctx.arc(x+70, 280, 55, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = "#5f8d3d";
+  ctx.fillRect(0,groundY,W,H-groundY);
+
+  ctx.fillStyle = "#4f6f2f";
+  for (let i=0;i<30;i++) {
+    const x = (i*45 - worldOffset)%W;
+    ctx.fillRect(x, groundY-4, 24, 5);
+  }
+}
+
+function drawPlayer() {
+  ctx.save();
+
+  if (player.invuln > 0 && Math.floor(player.invuln/5)%2 === 0) {
+    ctx.globalAlpha = 0.35;
+  }
+
+  // body
+  ctx.fillStyle = "#8b4513";
+  ctx.fillRect(player.x, player.y+20, player.w, player.h-20);
+
+  // shirt
+  ctx.fillStyle = "#2e8b57";
+  ctx.fillRect(player.x+6, player.y+28, player.w-12, Math.max(20, player.h-45));
+
+  // head
+  ctx.fillStyle = "#f1c27d";
+  ctx.fillRect(player.x+10, player.y, 28, 28);
+
+  // beard
+  ctx.fillStyle = "#5c3317";
+  ctx.fillRect(player.x+10, player.y+17, 28, 12);
+
+  // cap
+  ctx.fillStyle = "#c0392b";
+  ctx.fillRect(player.x+7, player.y-5, 34, 8);
+
+  // legs
+  if (!player.crouching) {
+    ctx.fillStyle = "#3b3b3b";
+    ctx.fillRect(player.x+7, player.y+67, 13, 23);
+    ctx.fillRect(player.x+28, player.y+67, 13, 23);
+  }
+
+  // axe
+  if (player.attacking) {
+    const dir = player.facing;
+    const ax = dir === 1 ? player.x+player.w-2 : player.x-42;
+    ctx.strokeStyle = "#6b4423";
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(player.x+player.w/2, player.y+38);
+    ctx.lineTo(ax + (dir===1 ? 30 : 10), player.y+22);
+    ctx.stroke();
+
+    ctx.fillStyle = "#d7dde3";
+    ctx.beginPath();
+    if (dir === 1) {
+      ctx.moveTo(ax+20, player.y+4);
+      ctx.lineTo(ax+50, player.y+16);
+      ctx.lineTo(ax+24, player.y+30);
+    } else {
+      ctx.moveTo(ax+28, player.y+4);
+      ctx.lineTo(ax-2, player.y+16);
+      ctx.lineTo(ax+24, player.y+30);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function drawCrow(c) {
+  ctx.save();
+  ctx.translate(c.x + c.w/2, c.y + c.h/2);
+
+  ctx.fillStyle = "#202124";
+  ctx.beginPath();
+  ctx.ellipse(0,0,24,15,0,0,Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle = "#111";
+  const wingY = Math.sin(c.flap)*10;
+  ctx.beginPath();
+  ctx.moveTo(-4,0);
+  ctx.lineTo(-24,-18-wingY);
+  ctx.lineTo(8,-5);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(5,0);
+  ctx.lineTo(28,-14+wingY);
+  ctx.lineTo(15,7);
+  ctx.fill();
+
+  ctx.fillStyle = "#d59b2d";
+  ctx.beginPath();
+  ctx.moveTo(24,-2);
+  ctx.lineTo(36,3);
+  ctx.lineTo(24,7);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawHUD() {
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(16,16,240,72);
+
+  ctx.fillStyle = "#fff";
+  ctx.font = "24px sans-serif";
+  ctx.fillText("SCORE " + score, 30, 46);
+
+  ctx.font = "22px sans-serif";
+  ctx.fillText("HP " + "❤".repeat(player.hp), 30, 76);
+}
+
+function drawGameOver() {
+  if (!gameOver) return;
+  ctx.fillStyle = "rgba(0,0,0,0.65)";
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = "#fff";
+  ctx.textAlign = "center";
+  ctx.font = "bold 54px sans-serif";
+  ctx.fillText("GAME OVER", W/2, H/2-20);
+  ctx.font = "26px sans-serif";
+  ctx.fillText("Rキーでリスタート", W/2, H/2+35);
+  ctx.textAlign = "start";
+}
+
+function draw() {
+  drawBackground();
+  drawPlayer();
+  for (const crow of crows) drawCrow(crow);
+  drawHUD();
+  drawGameOver();
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
